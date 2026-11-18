@@ -1,0 +1,4 @@
+#!/bin/sh
+# OpenTimestamps: upgrade previous proofs and submit new commit hash if due
+git ots upgrade >/dev/null 2>&1
+git ots run >/dev/null 2>&1 &

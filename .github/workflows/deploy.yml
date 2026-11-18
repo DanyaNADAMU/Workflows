@@ -1,0 +1,96 @@
+name: Deploy Service
+
+# Reusable rootless quadlet deploy, invoked as
+#   uses: Danyanadamu/Workflows/.github/workflows/deploy.yml@v1
+# This repository is public and therefore holds ZERO secrets by design: the
+# deploy key and known_hosts pin live in the calling repository's own secrets
+# (`secrets: inherit`), never here. The right to deploy lives where the
+# service runs, and not one step further.
+#
+# Model: the runner SSHes out to the target host's existing sshd as the
+# service's own user (e.g. `agent@`). The matching public key is pinned in
+# that user's authorized_keys with forced-command
+# `deploy-service <service> <digest>` (the Infra-provisioned wrapper), so a
+# leaked deploy key can do exactly one thing: roll one service to one image
+# digest, with mandatory rollback to the previous known-good digest on any
+# failed self-check. `git tag -v` is mandatory on every mirror checkout
+# before a deploy: tags are signed and the operator verifies first.
+on:
+  workflow_call:
+    inputs:
+      host:
+        description: Target host (staging test VM or production)
+        type: string
+        required: true
+      port:
+        description: SSH port of the target host
+        type: string
+        default: "22"
+      user:
+        description: Service user on the target (owns the rootless units)
+        type: string
+        required: true
+      image:
+        description: Registry image reference (tag form; digest resolved here)
+        type: string
+        required: true
+    secrets:
+      deploy_key:
+        description: Dedicated deploy private key (the service user's key)
+        required: true
+      host_key:
+        description: known_hosts line(s) for the target host key
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve image digest
+        # Deploy by digest, never by floating tag: a tag is mutable, so a
+        # tag deploy can silently roll to an unverified image between the
+        # build and the restart. The digest is pinned before anything runs
+        # on the target.
+        id: resolve
+        run: |
+          set -euo pipefail
+          image_ref="${{ inputs.image }}"
+          # buildx is preinstalled on hosted runners; imagetools inspects the
+          # registry manifest without pulling any layer. Resolves the digest
+          # of the manifest LIST for multi-arch images, so every architecture
+          # pins to the same source manifest.
+          digest="$(docker buildx imagetools inspect "$image_ref" \
+            --format '{{.Manifest.Digest}}')"
+          echo "Pinning $image_ref -> $digest"
+          echo "digest=$image_ref@$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Install SSH key material
+        # StrictHostKeyChecking=yes: the known_hosts pin is captured from
+        # the target at provisioning time; the deploy must fail rather than
+        # silently trust an unexpected host key.
+        run: |
+          install -d -m 700 ~/.ssh
+          install -m 600 /dev/stdin ~/.ssh/deploy_key <<< "${{ secrets.deploy_key }}"
+          printf '%s\n' "${{ secrets.host_key }}" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Roll service to pinned digest
+        # Exactly one command reaches the target: the forced-command wrapper
+        # (deploy-service) parses the single image-ref argument, pins it to
+        # the sanctioned registry prefix, and execs the service roll as the
+        # service user. It captures the previous known-good digest, updates
+        # the quadlet, reloads+restarts the user units, runs the fail-closed
+        # self-check, and rolls BACK to the captured digest on any failure.
+        # A failed rollback is red: the operator gets paged, not ignored.
+        env:
+          SSH_DEST: ${{ inputs.user }}@${{ inputs.host }}
+          SSH_PORT: ${{ inputs.port }}
+          IMAGE_REF: ${{ steps.resolve.outputs.digest }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key \
+              -o StrictHostKeyChecking=yes \
+              -o IdentitiesOnly=yes \
+              -o PasswordAuthentication=no \
+              -p "$SSH_PORT" \
+              "$SSH_DEST" "$IMAGE_REF"

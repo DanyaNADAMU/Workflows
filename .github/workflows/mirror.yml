@@ -1,0 +1,73 @@
+name: Mirror to Git Server
+
+# Reusable mirror push, invoked as
+#   uses: Danyanadamu/Workflows/.github/workflows/mirror.yml@v1
+# This repository is public and therefore holds ZERO secrets by design: the
+# push key for every (repo x server) pair lives in the calling repository's
+# own secrets (`secrets: inherit`), never here. The right to push lives
+# where the push happens, and not one step further.
+#
+# Server side, the bare mirror is push-only for CI: the matching public key
+# is pinned in the git user's authorized_keys with a forced-command of
+# `git-receive-pack '/home/git/<Repo>.git'`, so even a leaked key cannot
+# read anything or reach a shell.
+on:
+  workflow_call:
+    inputs:
+      host:
+        description: Git server SSH hostname (dedicated git sshd)
+        type: string
+        required: true
+      port:
+        description: SSH port of the dedicated git sshd
+        type: string
+        default: "22"
+      repo:
+        description: Bare repository path on the server (e.g. /home/git/Agent.git)
+        type: string
+        required: true
+    secrets:
+      mirror_key:
+        description: Dedicated push private key for this repo x server pair
+        required: true
+      host_key:
+        description: known_hosts line(s) for the git sshd host key
+        required: true
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        # fetch-depth 0 so refs/* travel complete: a mirror push that
+        # dropped branches or tags would silently corrupt the copy.
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install SSH key material
+        # StrictHostKeyChecking=yes: the known_hosts pin is a TOFU line
+        # captured from the server at provisioning time; the deploy must
+        # fail rather than silently trust an unexpected host key.
+        run: |
+          install -d -m 700 ~/.ssh
+          install -m 600 /dev/stdin ~/.ssh/mirror_key <<< "${{ secrets.mirror_key }}"
+          printf '%s\n' "${{ secrets.host_key }}" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Push mirror
+        # --mirror maps refs/* both ways with force, which is exactly the
+        # semantics a bare mirror needs (pruned branches must disappear);
+        # +refs/*:refs/* on the server side accepts that rewrite.
+        env:
+          GIT_SSH_COMMAND: >-
+            ssh -i ~/.ssh/mirror_key
+            -o StrictHostKeyChecking=yes
+            -o IdentitiesOnly=yes
+            -o PasswordAuthentication=no
+            -p ${{ inputs.port }}
+        run: |
+          # The port travels in GIT_SSH_COMMAND (-p), not the URL: the
+          # dedicated git sshd listens on its own port per server.
+          git remote add mirror "ssh://git@${{ inputs.host }}${{ inputs.repo }}"
+          git push --mirror mirror

@@ -1,0 +1,21 @@
+#!/bin/sh
+set -e
+
+# Prevent committing unencrypted Ansible Vault files
+UNENCRYPTED_VAULTS=""
+
+for file in $(git diff --cached --name-only --diff-filter=AM | grep -E '(^|/)(vault|\.vault|.*[._-]vault|[a-z0-9_-]*_vault)\.ya?ml$' | grep -v 'vaultwarden' || true); do
+    if [ -f "$file" ]; then
+        if ! head -n 1 "$file" | grep -q '^\$ANSIBLE_VAULT;'; then
+            UNENCRYPTED_VAULTS="$UNENCRYPTED_VAULTS  - $file\n"
+        fi
+    fi
+done
+
+if [ -n "$UNENCRYPTED_VAULTS" ]; then
+    printf "❌ [SECURITY ALERT] Attempting to commit unencrypted Ansible Vault file(s):\n"
+    printf "$UNENCRYPTED_VAULTS"
+    printf "Please encrypt the file(s) before committing:\n"
+    printf "  ansible-vault encrypt --vault-id <staging|production> <file>\n"
+    exit 1
+fi

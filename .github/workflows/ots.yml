@@ -1,0 +1,156 @@
+name: OpenTimestamps Daily Upgrade & Verify
+
+# Reusable OTS anchoring job, invoked as
+#   uses: Danyanadamu/Workflows/.github/workflows/ots.yml@v1
+# with `secrets: inherit` (BTC_GETBLOCK_KEY) from the calling repository.
+# GitHub is the sole origin for every repository, so daily anchoring cron
+# lives here in Actions: the GitHub push credentials exist only in GitHub,
+# and the right to write lives where the write happens.
+#
+# This job is the ONLY sanctioned writer to `main` besides tagged releases,
+# and `ots/*` tag pushes are the only sanctioned force path for OTS rebases.
+on:
+  workflow_call:
+    secrets:
+      btc_getblock_key:
+        description: GetBlock API endpoint URL (shared node key-in-path form)
+        required: true
+
+permissions:
+  # contents: write is needed to push upgraded .ots proofs back to main.
+  contents: write
+
+jobs:
+  ots:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install OpenTimestamps
+        # ubuntu-latest ships git and python3; only the OTS tooling is
+        # missing. pipx keeps the install isolated and cacheable.
+        run: pipx install git-ots opentimestamps-client
+
+      - name: Checkout repository
+        # Full history: ots upgrade must reach every pending proof, and the
+        # tag fetch for ots/* needs all refs materialized locally.
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # The default GITHUB_TOKEN of the calling repo carries the job's
+          # contents:write permission, so pushes go back authenticated.
+          token: ${{ github.token }}
+
+      - name: Configure Git Author
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch OTS tags and proofs
+        run: git fetch origin 'refs/tags/ots/*:refs/tags/ots/*' || true
+
+      - name: Upgrade pending timestamps
+        run: git ots upgrade
+
+      - name: Run timestamping if due
+        # || true: `git ots run` exits non-zero when nothing is due; a day
+        # without new attestations is success, not failure.
+        run: git ots run || true
+
+      - name: Configure Bitcoin node RPC for chain verification
+        # Public read-only community bitcoind (its credentials are published
+        # by the project itself, so nothing here is a secret). Full chain
+        # verification needs getblockheader from a mainnet node; no host in
+        # this infra runs one. Trust is deferred: local crypto validation
+        # stays the strict gate, the remote oracle answers only for block
+        # headers, and any lie can be disproved later from our own node.
+        run: |
+          mkdir -p ~/.bitcoin
+          cat > ~/.bitcoin/bitcoin.conf <<'EOF'
+          rpcconnect=bitcoinrpc.xyz
+          rpcport=2082
+          rpcuser=user
+          rpcpassword=pwd
+          EOF
+
+      - name: Verify all timestamps
+        # tee keeps the log for the cross-check step; pipefail preserves the
+        # verify exit code that plain `bash -e` would otherwise lose to tee.
+        run: |
+          set -o pipefail
+          git ots verify 2>&1 | tee /tmp/ots-verify.log
+
+      - name: Cross-check attested blocks across RPC providers
+        # python-bitcoinlib behind `ots verify` only speaks plain http://, so
+        # GetBlock (https + key-in-path) can never be the primary oracle.
+        # Instead: verify stays on bitcoinrpc.xyz, and this step
+        # independently re-fetches every attested block header from BOTH
+        # providers and compares hashes. Divergence means a node is lying
+        # -> red. GetBlock being merely down is a warning, not a failure:
+        # the strict gate (local crypto + one remote oracle) already passed.
+        env:
+          BTC_GETBLOCK_KEY: ${{ secrets.btc_getblock_key }}
+        run: |
+          python3 - <<'EOF'
+          import json, os, re, sys, urllib.request, base64
+
+          heights = sorted(set(int(m) for m in re.findall(
+              r'Bitcoin block (\d+) attests', open('/tmp/ots-verify.log').read())))
+          if not heights:
+              print("cross-check: no attested blocks in verify log; nothing to compare")
+              sys.exit(0)
+
+          def rpc_call(url, payload, auth=None, timeout=15):
+              data = json.dumps(payload).encode()
+              req = urllib.request.Request(url, data=data, headers={
+                  "Content-Type": "application/json",
+                  # Default "Python-urllib" UA is blocked by the community
+                  # node's fronting nginx; mimic the bitcoin client instead.
+                  "User-Agent": "AuthServiceProxy/0.1"})
+              if auth:
+                  req.add_header("Authorization", "Basic " +
+                                 base64.b64encode(auth.encode()).decode())
+              with urllib.request.urlopen(req, timeout=timeout) as resp:
+                  return json.loads(resp.read())
+
+          def block_hash(url, height, auth=None):
+              r = rpc_call(url, {"jsonrpc": "1.0", "id": "cc",
+                                 "method": "getblockhash", "params": [height]}, auth)
+              if r.get("error"):
+                  raise RuntimeError("getblockhash: " + str(r["error"].get("message")))
+              r = rpc_call(url, {"jsonrpc": "1.0", "id": "cc",
+                                 "method": "getblockheader", "params": [r["result"]]}, auth)
+              if r.get("error"):
+                  raise RuntimeError("getblockheader: " + str(r["error"].get("message")))
+              return r["result"]["hash"]
+
+          getblock_url = os.environ["BTC_GETBLOCK_KEY"].rstrip("/") + "/"
+          mismatches, getblock_ok = [], True
+          for h in heights:
+              hash_xyz = block_hash("http://bitcoinrpc.xyz:2082", h, auth="user:pwd")
+              line = f"block {h}: bitcoinrpc.xyz {hash_xyz}"
+              try:
+                  hash_gb = block_hash(getblock_url, h)
+                  line += f" | getblock {hash_gb}"
+                  if hash_gb != hash_xyz:
+                      mismatches.append(h)
+              except Exception as e:
+                  getblock_ok = False
+                  line += f" | getblock UNAVAILABLE ({type(e).__name__})"
+              print(line)
+
+          if mismatches:
+              print(f"CROSS-CHECK FAILED: providers disagree on {mismatches}; a node is lying")
+              sys.exit(1)
+          if not getblock_ok:
+              print("cross-check: GetBlock unavailable; single-oracle result for today")
+              sys.exit(0)
+          print(f"cross-check OK: {len(heights)} block(s) identical across providers")
+          EOF
+
+      - name: Push upgraded proofs and tags back
+        # Both pushes tolerate failure: a proof that cannot reach the origin
+        # today is simply re-upgraded by tomorrow's cron — anchoring is
+        # idempotent, so a transient push failure must not red the job
+        # after the strict verification gates already passed.
+        run: |
+          git push origin HEAD:${{ github.ref_name }} || true
+          git push origin 'refs/tags/ots/*:refs/tags/ots/*' || true
