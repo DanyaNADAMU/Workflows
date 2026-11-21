@@ -5,10 +5,12 @@
 `Danyanadamu/Workflows` is the **public, single source of truth for reusable
 GitHub Actions workflows** shared by every repository in the organization:
 `mirror.yml` (bare git-server mirroring), `ots.yml` (daily OpenTimestamps
-anchoring with dual-oracle cross-check), and `deploy.yml` (digest-pinned
-rootless quadlet deploys with mandatory rollback). Callers pin these workflows
-with a signed annotated tag (`@v1`); nothing in this repo is ever called by
-branch.
+anchoring with dual-oracle cross-check), `deploy.yml` (digest-pinned
+rootless quadlet deploys with mandatory rollback), `container-build.yml`
+(canonical GHCR image build with cache, attestations, and Trivy scan), and
+`release-precheck.yml` (signed-SemVer/CHANGELOG/ancestry release gate).
+Callers pin these workflows with a signed annotated tag (`@v1`); nothing in
+this repo is ever called by branch.
 
 ## Non-Negotiables
 
@@ -33,6 +35,14 @@ branch.
 - `deploy.yml` — resolves an image to a digest, then hands exactly one
   argument to the target host's forced-command wrapper
   (`deploy-service`), which owns capture/rollback/self-check logic.
+- `container-build.yml` — single canonical image build: lowercase GHCR
+  name normalization, GHA layer cache, provenance/SBOM attestations, and
+  a Trivy severity gate on pushed refs; returns `image_ref` to the caller
+  for `deploy.yml`.
+- `release-precheck.yml` — pure verification of the triggering tag
+  (strict SemVer, CHANGELOG section, SSH signature against the caller's
+  `.allowed_signers`, ancestry from the production branch); it performs
+  no side effects beyond reading the caller's checkout.
 - No workflow here may import another; each is a self-contained unit that
   receives all inputs via `workflow_call`.
 

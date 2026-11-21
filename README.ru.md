@@ -26,6 +26,8 @@ GitHub — **единственный origin** для всех репозито�
 | [`mirror.yml`](.github/workflows/mirror.yml) | Зеркалирует все refs вызывающего репозитория в bare-репозиторий git-сервера по выделенному push-only SSH-ключу |
 | [`ots.yml`](.github/workflows/ots.yml) | Ежедневное обновление и полная проверка доказательств OpenTimestamps + перекрёстная сверка заголовков блоков по двум независимым RPC-провайдерам, с отправкой доказательств обратно в `main` вызывающего репозитория |
 | [`deploy.yml`](.github/workflows/deploy.yml) | Деплой rootless-quadlet с закреплением по digest, захватом предыдущего известного-хорошего digest, fail-closed самопроверкой и обязательным откатом |
+| [`container-build.yml`](.github/workflows/container-build.yml) | Каноническая сборка образа в GHCR: нормализация имени в нижний регистр, layer-кэш GHA, attestation provenance + SBOM, гейт сканирования Trivy по критичности |
+| [`release-precheck.yml`](.github/workflows/release-precheck.yml) | Гейт продового релиза: строгий SemVer, секция в CHANGELOG, проверка SSH-подписи тега, происхождение от продовой ветки |
 
 ## Подключение
 
@@ -33,6 +35,8 @@ GitHub — **единственный origin** для всех репозито�
    - `mirror.yml`: `MIRROR_KEY`, `MIRROR_HOST_KEY` (на каждый целевой сервер)
    - `ots.yml`: `BTC_GETBLOCK_KEY`
    - `deploy.yml`: `DEPLOY_KEY`, `DEPLOY_HOST_KEY`
+   - `container-build.yml` / `release-precheck.yml`: не требуются — работают
+     на неявном `GITHUB_TOKEN` вызывающего репозитория и его же чекауте
 2. Добавьте caller-workflow в `.github/workflows/` своего репозитория с
    `uses: Danyanadamu/Workflows/.github/workflows/<имя>.yml@v1`
    и `secrets: inherit`.
