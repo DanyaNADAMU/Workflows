@@ -26,6 +26,8 @@ in the calling repository's own secrets and travels in via
 | [`mirror.yml`](.github/workflows/mirror.yml) | Force-push a full-ref mirror of the caller's repo to a bare git-server repository over a dedicated, push-only SSH key |
 | [`ots.yml`](.github/workflows/ots.yml) | Daily OpenTimestamps proof upgrade + full verification + dual-oracle block-header cross-check, pushing proofs back to the caller's `main` |
 | [`deploy.yml`](.github/workflows/deploy.yml) | Digest-pinned rootless quadlet deploy with capture of the previous known-good digest, fail-closed self-check, and mandatory rollback |
+| [`container-build.yml`](.github/workflows/container-build.yml) | Canonical GHCR image build: lowercase name normalization, GHA layer cache, provenance + SBOM attestations, severity-gated Trivy scan |
+| [`release-precheck.yml`](.github/workflows/release-precheck.yml) | Production-release gate: strict SemVer, CHANGELOG section, SSH tag-signature verification, ancestry from the production branch |
 
 ## Consuming
 
@@ -33,6 +35,8 @@ in the calling repository's own secrets and travels in via
    - `mirror.yml`: `MIRROR_KEY`, `MIRROR_HOST_KEY` (per target server)
    - `ots.yml`: `BTC_GETBLOCK_KEY`
    - `deploy.yml`: `DEPLOY_KEY`, `DEPLOY_HOST_KEY`
+   - `container-build.yml` / `release-precheck.yml`: none — they run on
+     the caller's implicit `GITHUB_TOKEN` and the caller's checkout only
 2. Add a caller workflow in `.github/workflows/` of your repo with
    `uses: Danyanadamu/Workflows/.github/workflows/<name>.yml@v1`
    and `secrets: inherit`.

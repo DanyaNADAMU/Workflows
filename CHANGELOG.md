@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `container-build.yml`: reusable canonical GHCR image build — lowercase
+  name normalization, GHA layer cache, provenance + SBOM attestations,
+  and a severity-gated Trivy scan (default CRITICAL) on pushed refs.
+- `release-precheck.yml`: reusable production-release gate — strict
+  SemVer validation, CHANGELOG section check, SSH tag-signature
+  verification against the caller's `.allowed_signers`, and ancestry
+  proof that the tag descends from the production branch.
+
 ## [v1.0.0] - 2026-11-19
 
 ### Added

@@ -1,0 +1,131 @@
+name: Container Build
+
+# Reusable GHCR image build, invoked as
+#   uses: Danyanadamu/Workflows/.github/workflows/container-build.yml@v1
+# One canonical build path for every repository: lowercase name
+# normalization, GHA layer cache, provenance + SBOM attestations, and a
+# severity-gated Trivy scan on pushed refs. Public repository holding
+# ZERO secrets by design: only the implicit GITHUB_TOKEN is used.
+on:
+  workflow_call:
+    inputs:
+      context:
+        description: Build context directory
+        type: string
+        required: true
+      file:
+        description: Containerfile/Dockerfile path
+        type: string
+        required: true
+      image_tag:
+        description: Primary tag (commit sha for builds, ref_name for releases)
+        type: string
+        required: true
+      extra_tags:
+        description: Extra tag NAMES, one per line (no registry/image prefix)
+        type: string
+        required: false
+        default: ''
+      build_args:
+        description: Build args, one KEY=VALUE per line
+        type: string
+        required: false
+        default: ''
+      push:
+        description: Push to GHCR (false for PR verification builds)
+        type: boolean
+        required: false
+        default: true
+      scan_severity:
+        description: Trivy severity gate for pushed refs
+        type: string
+        required: false
+        default: CRITICAL
+    outputs:
+      image_ref:
+        description: Pushed image reference (ghcr.io/name:primary-tag)
+        value: ${{ jobs.build.outputs.image_ref }}
+
+# The calling job's permissions are authoritative; declared here so the
+# contract is visible in the catalog and can only be downgraded upstream.
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    outputs:
+      image_ref: ${{ steps.record.outputs.image_ref }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Expand image tags
+        env:
+          PRIMARY_TAG: ${{ inputs.image_tag }}
+          EXTRA_TAGS: ${{ inputs.extra_tags }}
+        run: |
+          set -euo pipefail
+          # GHCR rejects uppercase path segments; github.repository keeps
+          # the original mixed-case owner/name spelling, so normalize once
+          # and expand every requested tag onto the canonical name.
+          image_name="${GITHUB_REPOSITORY,,}"
+          {
+            echo "IMAGE_NAME=${image_name}"
+            echo "IMAGE_REF=ghcr.io/${image_name}:${PRIMARY_TAG}"
+            echo "IMAGE_TAGS<<TAGS_EOF"
+            echo "ghcr.io/${image_name}:${PRIMARY_TAG}"
+            while IFS= read -r tag; do
+              [ -n "$tag" ] && echo "ghcr.io/${image_name}:${tag}"
+            done <<< "$EXTRA_TAGS"
+            echo "TAGS_EOF"
+          } >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        # The default docker-driver builder cannot export the GHA cache
+        # or produce provenance/SBOM attestations; the container-driver
+        # builder created here can, and buildx is preinstalled anyway.
+        uses: docker/setup-buildx-action@f7ce87c1d6bead3e36075b2ce75da1f6cc28aaca # v3.9.0
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.file }}
+          push: ${{ inputs.push }}
+          # Attestations ride only on pushed refs: PR verification builds
+          # neither push nor load, and buildx rejects provenance there.
+          provenance: ${{ inputs.push && 'mode=max' || 'false' }}
+          sbom: ${{ inputs.push }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: ${{ inputs.build_args }}
+          tags: ${{ env.IMAGE_TAGS }}
+
+      - name: Vulnerability scan (Trivy)
+        # Only pushed refs are gated: a PR build produces no artifact, so
+        # there is nothing to block. The scan necessarily runs after the
+        # push (the ref must exist to be scanned), so a red scan means the
+        # image sits in GHCR but is never deployed — staging rollouts and
+        # production releases both require this job green.
+        if: inputs.push
+        env:
+          TRIVY_VERSION: '0.76.2'
+          SEVERITY: ${{ inputs.scan_severity }}
+        run: |
+          set -euo pipefail
+          curl -sfL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
+            | tar -xz trivy
+          ./trivy image --exit-code 1 --ignore-unfixed --severity "$SEVERITY" "$IMAGE_REF"
+
+      - name: Record pushed image ref
+        id: record
+        run: echo "image_ref=$IMAGE_REF" >> "$GITHUB_OUTPUT"
