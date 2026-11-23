@@ -130,10 +130,12 @@ jobs:
           docker buildx prune --all --force
           curl -sfL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
             | tar -xz trivy
-          # The Java DB download only feeds .jar dependency scanning and no
-          # image built through this catalog is a Java application; skipping
-          # it keeps another ~1 GiB fetch off the already-tight runner disk.
-          ./trivy image --skip-java-db-update --exit-code 1 --ignore-unfixed --severity "$SEVERITY" "$IMAGE_REF"
+          # No --skip-java-db-update here: trivy hard-fails the very first
+          # scan on a cold runner when the flag is set ("the first run cannot
+          # skip downloading the Java DB"), and every hosted runner is cold.
+          # The prune above is what buys the disk headroom the Java DB needs;
+          # --ignore-unfixed keeps the gate signal clean regardless.
+          ./trivy image --exit-code 1 --ignore-unfixed --severity "$SEVERITY" "$IMAGE_REF"
 
       - name: Record pushed image ref
         id: record
