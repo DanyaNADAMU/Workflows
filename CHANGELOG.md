@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.1.3] - 2026-11-24
+
+### Fixed
+- `container-build.yml`: dropped `--skip-java-db-update` from the Trivy
+  gate one release after introducing it — trivy hard-fails the very
+  first image scan on a cold cache when the flag is set ("the first run
+  cannot skip downloading the Java DB"), and every hosted runner is
+  cold, so the gate never got as far as scanning. The buildx prune
+  merged in v1.1.2 is what actually frees the runner disk the scan
+  needs; the Java DB now downloads on every scan, as it must.
+
 ## [v1.1.2] - 2026-11-23
 
 ### Fixed
@@ -16,10 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   push is dead weight that trivy's DB downloads land on top of; the scan
   step now prunes the local buildx cache first, and a red scan again means
   a real finding rather than runner disk exhaustion.
-- `container-build.yml`: the Trivy scan now passes `--skip-java-db-update`:
-  the Java vulnerability DB only feeds `.jar` dependency scanning, no image
-  built through this catalog is a Java application, and the ~1 GiB download
-  was extra pressure on the same runner disk the scan was dying on.
+- `container-build.yml`: ~~the Trivy scan now passes
+  `--skip-java-db-update`~~ — reverted in v1.1.3: the flag makes trivy
+  hard-fail the first scan on a cold runner, which is every hosted
+  runner; see v1.1.3 for the full story. The prune above is the part
+  of this release that actually fixed the disk exhaustion.
 
 ## [v1.1.1] - 2026-11-23
 
