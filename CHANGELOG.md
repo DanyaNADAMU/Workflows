@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.1.1] - 2026-11-23
+
+### Fixed
+- `release-precheck.yml`: the tag-signature gate failed on every
+  tag-triggered run because `actions/checkout` rewrites the triggering
+  tag ref to the peeled commit, leaving `git tag -v` with a plain
+  commit object ("cannot verify a non-tag object"); the ref is now
+  force re-fetched from origin so the check verifies the annotated,
+  signed tag object.
+
+## [v1.1.0] - 2026-11-22
+
 ### Added
 - `container-build.yml`: reusable canonical GHCR image build — lowercase
   name normalization, GHA layer cache, provenance + SBOM attestations,

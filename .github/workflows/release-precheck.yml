@@ -59,6 +59,12 @@ jobs:
           #    fail here before anything ships.
           git config gpg.format ssh
           git config gpg.ssh.allowedSignersFile .allowed_signers
+          # actions/checkout@v4 rewrites the triggering tag ref to point at
+          # the peeled commit (+<sha>:refs/tags/<tag>), which discards the
+          # annotated tag object, so `git tag -v` would verify a plain
+          # commit and abort. Force re-fetch the ref from origin so the
+          # check runs against the signed annotated tag object.
+          git fetch --force --quiet origin "+refs/tags/$TAG:refs/tags/$TAG"
           git tag -v "$TAG"
           # 4. Annotated-tag ancestry: peel the tag to its commit and
           #    demand it already be merged into the production branch.
