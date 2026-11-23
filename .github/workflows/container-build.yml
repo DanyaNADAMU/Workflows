@@ -130,7 +130,10 @@ jobs:
           docker buildx prune --all --force
           curl -sfL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
             | tar -xz trivy
-          ./trivy image --exit-code 1 --ignore-unfixed --severity "$SEVERITY" "$IMAGE_REF"
+          # The Java DB download only feeds .jar dependency scanning and no
+          # image built through this catalog is a Java application; skipping
+          # it keeps another ~1 GiB fetch off the already-tight runner disk.
+          ./trivy image --skip-java-db-update --exit-code 1 --ignore-unfixed --severity "$SEVERITY" "$IMAGE_REF"
 
       - name: Record pushed image ref
         id: record

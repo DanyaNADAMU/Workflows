@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   push is dead weight that trivy's DB downloads land on top of; the scan
   step now prunes the local buildx cache first, and a red scan again means
   a real finding rather than runner disk exhaustion.
+- `container-build.yml`: the Trivy scan now passes `--skip-java-db-update`:
+  the Java vulnerability DB only feeds `.jar` dependency scanning, no image
+  built through this catalog is a Java application, and the ~1 GiB download
+  was extra pressure on the same runner disk the scan was dying on.
 
 ## [v1.1.1] - 2026-11-23
 
