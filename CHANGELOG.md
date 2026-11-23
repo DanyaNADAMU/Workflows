@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.1.2] - 2026-11-23
+
+### Fixed
+- `container-build.yml`: the Trivy gate intermittently failed on pushed
+  refs because hosted runners run out of disk mid-scan — the layer cache
+  rides on `cache-to: type=gha`, so the local buildx cache left after the
+  push is dead weight that trivy's DB downloads land on top of; the scan
+  step now prunes the local buildx cache first, and a red scan again means
+  a real finding rather than runner disk exhaustion.
+- `container-build.yml`: the Trivy scan now passes `--skip-java-db-update`:
+  the Java vulnerability DB only feeds `.jar` dependency scanning, no image
+  built through this catalog is a Java application, and the ~1 GiB download
+  was extra pressure on the same runner disk the scan was dying on.
+
 ## [v1.1.1] - 2026-11-23
 
 ### Fixed
