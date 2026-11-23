@@ -122,6 +122,12 @@ jobs:
           SEVERITY: ${{ inputs.scan_severity }}
         run: |
           set -euo pipefail
+          # The layer cache rides on cache-to: type=gha, so the local buildx
+          # cache is dead weight once the push is done. Drop it before the
+          # scan: hosted runners run out of disk otherwise (trivy unpacks its
+          # DBs on top of the build residue) and the prune cannot happen after
+          # a failed build step — this gate is the last consumer of the cache.
+          docker buildx prune --all --force
           curl -sfL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
             | tar -xz trivy
           ./trivy image --exit-code 1 --ignore-unfixed --severity "$SEVERITY" "$IMAGE_REF"
