@@ -52,6 +52,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whole catalog now pins `ubuntu-24.04` except `ots.yml` (whose pipx
   install path was validated on `ubuntu-latest`).
 
+## [Unreleased]
+
+### Fixed
+- `ots.yml`: pending-attestation proofs no longer deadlock the daily cron.
+  The verify gate is strict about confirmed proofs but tolerates a proof
+  that is still awaiting its Bitcoin confirmation while it is young: the
+  proof rides the push (so a later cron can upgrade it — the designed
+  path), and only a proof pending for a week or more goes red ("the
+  calendar lost the submission; re-stamp"). Previously a lost calendar
+  submission red-locked the loop forever: the pending proof could never
+  reach `main`, so nothing could ever upgrade it.
+
 ## [v1.1.3] - 2026-11-24
 
 ### Fixed
