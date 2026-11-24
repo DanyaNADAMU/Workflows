@@ -70,6 +70,10 @@ jobs:
             --format '{{.Manifest.Digest}}')"
           echo "Pinning $image_ref -> $digest"
           echo "digest=$image_ref@$digest" >> "$GITHUB_OUTPUT"
+          # gh attestation verify only accepts a digest-only OCI reference
+          # (name@sha256:...): a name:tag@sha256:... form is misparsed as a
+          # local file path, so strip the tag for the verification input.
+          echo "verify_ref=${image_ref%%:*}@$digest" >> "$GITHUB_OUTPUT"
 
       - name: Verify build provenance
         # Closing the loop the attestations were opened by
@@ -81,7 +85,7 @@ jobs:
         # digest fails closed; the deploy never reaches the SSH step.
         env:
           GH_TOKEN: ${{ github.token }}
-          IMAGE_REF: ${{ steps.resolve.outputs.digest }}
+          IMAGE_REF: ${{ steps.resolve.outputs.verify_ref }}
         run: |
           set -euo pipefail
           gh attestation verify "$IMAGE_REF" \
