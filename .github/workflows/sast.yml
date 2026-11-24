@@ -38,7 +38,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@bf58c2ac1f8060aa73f1225f461c80391348076a # v4
+        uses: github/codeql-action/init@915412ff23e8b7659517e607487dbeae018f2934 # v4
         with:
           languages: ${{ matrix.language }}
 
@@ -46,9 +46,9 @@ jobs:
         # The autobuilder covers the standard layout of every language the
         # organization ships; a bespoke build step would add per-repo
         # surface for zero present benefit.
-        uses: github/codeql-action/autobuild@bf58c2ac1f8060aa73f1225f461c80391348076a # v4
+        uses: github/codeql-action/autobuild@915412ff23e8b7659517e607487dbeae018f2934 # v4
 
       - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@bf58c2ac1f8060aa73f1225f461c80391348076a # v4
+        uses: github/codeql-action/analyze@915412ff23e8b7659517e607487dbeae018f2934 # v4
         with:
           category: /language:${{ matrix.language }}
