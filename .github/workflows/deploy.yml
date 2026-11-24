@@ -34,6 +34,12 @@ on:
         description: Registry image reference (tag form; digest resolved here)
         type: string
         required: true
+      verify_provenance:
+        description: Verify the Sigstore provenance attestation before the SSH step
+          (false for repos that cannot host attestations, e.g. user-owned private repositories)
+        type: boolean
+        required: false
+        default: true
     secrets:
       deploy_key:
         description: Dedicated deploy private key (the service user's key)
@@ -76,19 +82,25 @@ jobs:
           echo "verify_ref=${image_ref%%:*}@$digest" >> "$GITHUB_OUTPUT"
 
       - name: Verify build provenance
-        # Closing the loop the attestations were opened by
-        # container-build.yml: the build job pushes a Sigstore-signed
-        # provenance attestation (actions/attest-build-provenance) to this
+        # Closing the loop the attest job opened: the caller signs the
+        # pushed digest (actions/attest-build-provenance) into this
         # repository's attestation store, and this step proves — before
-        # anything touches a host — that the pinned digest was built by THIS
-        # repository's CI from THIS workflow. A substituted or unattested
-        # digest fails closed; the deploy never reaches the SSH step.
+        # anything touches a host — that the pinned digest was built by
+        # THIS repository's CI. A substituted or unattested digest fails
+        # closed; the deploy never reaches the SSH step.
+        # verify_provenance=false is the documented escape hatch for
+        # repositories that cannot host attestations at all (user-owned
+        # private repos): their deploy integrity stays with the digest
+        # pin and the forced-command wrapper.
+        if: inputs.verify_provenance
         env:
           GH_TOKEN: ${{ github.token }}
           IMAGE_REF: ${{ steps.resolve.outputs.verify_ref }}
         run: |
           set -euo pipefail
-          gh attestation verify "$IMAGE_REF" \
+          # The oci:// prefix is what makes the CLI treat the argument as
+          # an OCI reference; a bare name@sha256:... is parsed as a file path.
+          gh attestation verify "oci://$IMAGE_REF" \
             --repo "$GITHUB_REPOSITORY" \
             --format json >/dev/null
           echo "provenance OK: $IMAGE_REF attested by this repository's CI"
