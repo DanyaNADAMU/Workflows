@@ -42,11 +42,11 @@ on:
         description: known_hosts line(s) for the target host key
         required: true
 
-# The deploy must never read or write repository content; the token here
-# only answers the GitHub attestation store for provenance verification.
+# The deploy must never read or write repository content beyond the
+# checkout-less token minimum; the GitHub attestation store lookup in
+# the provenance step rides the caller-granted token permissions.
 permissions:
   contents: read
-  attestations: read
 
 jobs:
   deploy:
