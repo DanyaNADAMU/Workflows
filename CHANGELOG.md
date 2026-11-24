@@ -21,17 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   caller-committed `.github/protection-expected.json` and goes red on
   drift; reads via a dedicated read-only fine-grained PAT passed as an
   optional secret (warns, not fails, until provisioned).
-- `container-build.yml`: Sigstore-signed build-provenance attestation
-  (`actions/attest-build-provenance`) for every pushed image. The buildx
-  in-index provenance turned out to be unsigned on inspection and
-  therefore unverifiable evidence; the GitHub attestation store entry is
-  signed via the runner's OIDC identity and closed the loop that
-  `deploy.yml` now verifies before any host is touched. Callers must add
-  `id-token: write` + `attestations: write` to the calling build job and
-  `attestations: read` to the deploy-calling jobs — GitHub's startup
-  validation rejects those permission names inside a reusable workflow's
-  own block, so the rights must live with the caller, which is where the
-  right to act belongs anyway.
+- `container-build.yml`: `image_digest` output — the Sigstore provenance
+  attestation moved to the CALLER side (`actions/attest-build-provenance`
+  job after `build`): `id-token` cannot be granted inside a reusable
+  workflow, so the signing right and the signing step both live where the
+  build is ordered. buildx's in-index provenance stays what it always was
+  — unsigned and unverifiable; the GitHub attestation store entry is the
+  evidence `deploy.yml` verifies before any host is touched. Callers add
+  an `attest` job with `id-token: write` + `attestations: write` and
+  `attestations: read` on deploy-calling jobs.
 - `container-build.yml`: full-severity Trivy report as a 30-day artifact
   next to every pushed build — the CRITICAL-only gate stays narrow by
   design, but HIGH/MEDIUM findings now stay reachable without re-running

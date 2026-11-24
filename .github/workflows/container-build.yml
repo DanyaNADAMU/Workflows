@@ -47,15 +47,18 @@ on:
       image_ref:
         description: Pushed image reference (ghcr.io/name:primary-tag)
         value: ${{ jobs.build.outputs.image_ref }}
+      image_digest:
+        description: Pushed image digest (sha256:...) — the attestable subject
+        value: ${{ jobs.build.outputs.image_digest }}
 
 # The calling job's permissions are authoritative; declared here so the
 # contract is visible in the catalog and can only be downgraded upstream.
-# NOTE: id-token + attestations are deliberately NOT declared here —
-# GitHub's startup validation rejects those permission names in a
-# reusable workflow's own block, while the provenance attestation step
-# needs them. The CALLER must grant id-token: write + attestations:
-# write on the calling job: the right to sign lives where the build is
-# ordered.
+# NOTE: the Sigstore provenance attestation deliberately does NOT run
+# here — `id-token` cannot be granted to a reusable workflow's job
+# (GitHub hard limitation: the OIDC grant never propagates past the
+# `uses:` boundary). Callers run their own `attest` job after `build`
+# with id-token: write + attestations: write, signing the digest this
+# workflow returns via the `image_digest` output.
 permissions:
   contents: read
   packages: write
@@ -66,6 +69,7 @@ jobs:
     timeout-minutes: 30
     outputs:
       image_ref: ${{ steps.record.outputs.image_ref }}
+      image_digest: ${{ steps.pushbuild.outputs.digest }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -119,19 +123,6 @@ jobs:
           cache-to: type=gha,mode=max
           build-args: ${{ inputs.build_args }}
           tags: ${{ env.IMAGE_TAGS }}
-
-      - name: Sign build provenance attestation
-        # buildx's in-index provenance is unsigned and therefore not
-        # verifiable evidence; this step creates the Sigstore-signed
-        # provenance in THIS repository's attestation store (GitHub's
-        # OIDC keyless signing), which deploy.yml verifies before any
-        # host is touched. PR verification builds push nothing, so there
-        # is no subject to attest.
-        if: inputs.push
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-name: ghcr.io/${{ env.IMAGE_NAME }}
-          subject-digest: ${{ steps.pushbuild.outputs.digest }}
 
       - name: Vulnerability scan (Trivy)
         # Only pushed refs are gated: a PR build produces no artifact, so
