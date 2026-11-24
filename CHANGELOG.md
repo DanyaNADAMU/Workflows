@@ -27,7 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   therefore unverifiable evidence; the GitHub attestation store entry is
   signed via the runner's OIDC identity and closed the loop that
   `deploy.yml` now verifies before any host is touched. Callers must add
-  `id-token: write` + `attestations: write` to the calling build job.
+  `id-token: write` + `attestations: write` to the calling build job and
+  `attestations: read` to the deploy-calling jobs — GitHub's startup
+  validation rejects those permission names inside a reusable workflow's
+  own block, so the rights must live with the caller, which is where the
+  right to act belongs anyway.
 - `container-build.yml`: full-severity Trivy report as a 30-day artifact
   next to every pushed build — the CRITICAL-only gate stays narrow by
   design, but HIGH/MEDIUM findings now stay reachable without re-running
