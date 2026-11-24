@@ -23,6 +23,9 @@ permissions:
 jobs:
   ots:
     runs-on: ubuntu-latest
+    # Hard ceiling: a hung oracle or a stuck git push must cost a bounded
+    # amount of runner time, not a full run of paid minutes.
+    timeout-minutes: 30
     steps:
       - name: Install OpenTimestamps
         # ubuntu-latest ships git and python3; only the OTS tooling is

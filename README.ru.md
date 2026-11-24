@@ -25,9 +25,12 @@ GitHub — **единственный origin** для всех репозито�
 | --- | --- |
 | [`mirror.yml`](.github/workflows/mirror.yml) | Зеркалирует все refs вызывающего репозитория в bare-репозиторий git-сервера по выделенному push-only SSH-ключу |
 | [`ots.yml`](.github/workflows/ots.yml) | Ежедневное обновление и полная проверка доказательств OpenTimestamps + перекрёстная сверка заголовков блоков по двум независимым RPC-провайдерам, с отправкой доказательств обратно в `main` вызывающего репозитория |
-| [`deploy.yml`](.github/workflows/deploy.yml) | Деплой rootless-quadlet с закреплением по digest, захватом предыдущего известного-хорошего digest, fail-closed самопроверкой и обязательным откатом |
-| [`container-build.yml`](.github/workflows/container-build.yml) | Каноническая сборка образа в GHCR: нормализация имени в нижний регистр, layer-кэш GHA, attestation provenance + SBOM, гейт сканирования Trivy по критичности |
+| [`deploy.yml`](.github/workflows/deploy.yml) | Деплой rootless-quadlet с проверкой provenance сборки, закреплением по digest, захватом предыдущего известного-хорошего digest, fail-closed самопроверкой и обязательным откатом |
+| [`container-build.yml`](.github/workflows/container-build.yml) | Каноническая сборка образа в GHCR: нормализация имени в нижний регистр, layer-кэш GHA, attestation provenance + SBOM, подписанная provenance (Sigstore), гейт Trivy по критичности + полный отчёт-артефакт |
 | [`release-precheck.yml`](.github/workflows/release-precheck.yml) | Гейт продового релиза: строгий SemVer, секция в CHANGELOG, проверка SSH-подписи тега, происхождение от продовой ветки |
+| [`sast.yml`](.github/workflows/sast.yml) | Статический анализ кода (CodeQL) для репозиториев с поддерживаемыми языками (бесплатно на публичных репо, first-party) |
+| [`scan-cron.yml`](.github/workflows/scan-cron.yml) | Плановый повторный скан задеплоенных digest'ов — «дрейф» CVE после релиза превращается в красный прогон и сигнал к патч-релизу |
+| [`protection-audit.yml`](.github/workflows/protection-audit.yml) | Аудит дрейфа настроек: фактическая защита main и рулсет релизных тегов сверяются с зафиксированным в репозитории контрактом |
 
 ## Подключение
 
@@ -35,8 +38,14 @@ GitHub — **единственный origin** для всех репозито�
    - `mirror.yml`: `MIRROR_KEY`, `MIRROR_HOST_KEY` (на каждый целевой сервер)
    - `ots.yml`: `BTC_GETBLOCK_KEY`
    - `deploy.yml`: `DEPLOY_KEY`, `DEPLOY_HOST_KEY`
-   - `container-build.yml` / `release-precheck.yml`: не требуются — работают
-     на неявном `GITHUB_TOKEN` вызывающего репозитория и его же чекауте
+   - `container-build.yml`: выдайте вызывающей джобе `id-token: write` +
+     `attestations: write` — подписанная provenance использует OIDC-identity
+     раннера. В остальном ничего: работает на неявном `GITHUB_TOKEN`
+     вызывающего репозитория и его же чекауте
+   - `protection-audit.yml`: опциональный read-only fine-grained PAT
+     (`administration: read`) как `protection_token` — до подключения
+     просто предупреждает
+   - `sast.yml` / `scan-cron.yml` / `release-precheck.yml`: не требуются
 2. Добавьте caller-workflow в `.github/workflows/` своего репозитория с
    `uses: Danyanadamu/Workflows/.github/workflows/<имя>.yml@v1`
    и `secrets: inherit`.

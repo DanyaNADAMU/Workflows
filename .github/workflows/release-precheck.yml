@@ -30,6 +30,9 @@ permissions:
 jobs:
   precheck:
     runs-on: ubuntu-24.04
+    # Cheap verification job; anything hung here must fail fast, not eat
+    # runner minutes while a release waits on it.
+    timeout-minutes: 10
     steps:
       - name: Checkout full history with tags
         # Full history: tag verification and ancestry resolution reach

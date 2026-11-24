@@ -1,0 +1,64 @@
+name: Scheduled Image Re-scan
+
+# Reusable post-deploy CVE drift detector, invoked as
+#   uses: Danyanadamu/Workflows/.github/workflows/scan-cron.yml@v1
+# with the image references that are CURRENTLY DEPLOYED (prod :latest and
+# the staging tag). container-build.yml scans every image exactly once, at
+# build time; a CVE published the day after a release would otherwise sit
+# silently in production until the next tag. This workflow re-scans the
+# deployed digests on the caller's cron schedule: a red run is a signal to
+# cut a patch release, never a blocker for the running deploy.
+#
+# Public repository holding ZERO secrets by design: images are pulled
+# anonymously from the public GHCR packages, no credentials are involved.
+on:
+  workflow_call:
+    inputs:
+      images:
+        description: Image reference(s) to scan, one per line (tag or digest form)
+        type: string
+        required: true
+      scan_severity:
+        description: Trivy severity gate
+        type: string
+        required: false
+        default: CRITICAL
+      ignore_unfixed:
+        description: Gate only on findings that have an upstream fix
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  rescan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Vulnerability re-scan (Trivy)
+        env:
+          TRIVY_VERSION: '0.76.2'
+          IMAGES: ${{ inputs.images }}
+          SEVERITY: ${{ inputs.scan_severity }}
+          IGNORE_UNFIXED: ${{ inputs.ignore_unfixed }}
+        run: |
+          set -euo pipefail
+          curl -sfL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
+            | tar -xz trivy
+          flags="--exit-code 1 --severity $SEVERITY"
+          # Same gate semantics as container-build.yml: findings with no
+          # upstream fix stay visible but do not page the operator.
+          [ "$IGNORE_UNFIXED" = "true" ] && flags="$flags --ignore-unfixed"
+          failed=0
+          while IFS= read -r image; do
+            [ -z "$image" ] && continue
+            echo "::group::re-scan $image"
+            if ! ./trivy image $flags "$image"; then
+              echo "::error::NEW findings (>= $SEVERITY) in deployed image $image — time to cut a patch release"
+              failed=1
+            fi
+            echo "::endgroup::"
+          done <<< "$IMAGES"
+          exit "$failed"

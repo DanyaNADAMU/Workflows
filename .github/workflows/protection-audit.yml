@@ -1,0 +1,91 @@
+name: Main Protection Audit
+
+# Reusable configuration-drift auditor for the main-branch protection
+# invariant, invoked as
+#   uses: Danyanadamu/Workflows/.github/workflows/protection-audit.yml@v1
+# The branch-protection rules ("no force pushes, no deletions, linear
+# history, enforce for admins") and the release-tag ruleset are manual
+# state on GitHub's side: nothing reconciles them with the rules the
+# repositories document. This workflow diffs the ACTUAL settings against
+# the EXPECTED ones committed by the caller in `.github/protection-expected.json`
+# and goes red on any drift, so a silently flipped setting surfaces as a
+# failing run instead of a discovered-after-the-fact rewrite.
+#
+# Reading branch protection needs repository administration rights, which
+# the GITHUB_TOKEN can never hold — the caller passes a dedicated
+# read-only fine-grained PAT (administration: read ONLY) as `protection_token`.
+# The token is OPTIONAL on purpose: until it is provisioned the job stays
+# green with a loud warning annotation, not red, so wiring the audit never
+# blocks pipelines.
+on:
+  workflow_call:
+    secrets:
+      protection_token:
+        description: Fine-grained read-only PAT with administration:read for this repo
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        # The expected protection contract travels in the caller's own
+        # tree: audited together with the workflows that depend on it.
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Diff actual protection against expected
+        env:
+          PAT: ${{ secrets.protection_token }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PAT" ]; then
+            echo "::warning::protection_token secret is not set — skipping the protection audit. Provision a read-only fine-grained PAT (administration:read) and set the secret to enable drift detection."
+            exit 0
+          fi
+          repo="$GITHUB_REPOSITORY"
+          expected=".github/protection-expected.json"
+          if [ ! -f "$expected" ]; then
+            echo "::error::$expected is missing: commit the expected protection contract before enabling the audit"
+            exit 1
+          fi
+          branch=$(jq -r '.branch // "main"' "$expected")
+          api() { curl -sf -H "Authorization: Bearer $PAT" -H "Accept: application/vnd.github+json" "$1"; }
+
+          # --- branch protection ---
+          actual=$(api "https://api.github.com/repos/$repo/branches/$branch/protection" \
+            | jq '{enforce_admins: .enforce_admins.enabled,
+                   required_linear_history: .required_linear_history.enabled,
+                   allow_force_pushes: .allow_force_pushes.enabled,
+                   allow_deletions: .allow_deletions.enabled}')
+          want=$(jq --arg b "$branch" '.protection' "$expected")
+          if [ "$actual" != "$want" ]; then
+            echo "::error::Branch protection drift on '$branch'."
+            echo "expected: $want"
+            echo "actual:   $actual"
+            exit 1
+          fi
+          echo "branch protection OK: $actual"
+
+          # --- release tag ruleset ---
+          pattern=$(jq -r '.tag_ruleset.include[0]' "$expected")
+          want_rules=$(jq -c '.tag_ruleset.rules | sort' "$expected")
+          ruleset=$(api "https://api.github.com/repos/$repo/rulesets?per_page=100" \
+            | jq -c --arg p "$pattern" \
+                '[.[] | select(.target == "tag") | select(.conditions.ref_name.include | index($p))] | first // empty')
+          if [ -z "$ruleset" ]; then
+            echo "::error::No active tag ruleset matching '$pattern' — release tags are unprotected (force-move/delete possible)."
+            exit 1
+          fi
+          got_rules=$(echo "$ruleset" | jq -c '[.rules[].type] | sort')
+          if [ "$got_rules" != "$want_rules" ]; then
+            echo "::error::Tag ruleset drift for '$pattern'."
+            echo "expected rules: $want_rules"
+            echo "actual rules:   $got_rules"
+            exit 1
+          fi
+          echo "tag ruleset OK: $pattern -> $got_rules"
+          echo "protection audit OK: '$branch' and '$pattern' match the committed contract"

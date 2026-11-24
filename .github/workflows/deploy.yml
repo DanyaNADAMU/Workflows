@@ -4,8 +4,8 @@ name: Deploy Service
 #   uses: Danyanadamu/Workflows/.github/workflows/deploy.yml@v1
 # This repository is public and therefore holds ZERO secrets by design: the
 # deploy key and known_hosts pin live in the calling repository's own secrets
-# (`secrets: inherit`), never here. The right to deploy lives where the
-# service runs, and not one step further.
+# (passed by name through `workflow_call`), never here. The right to deploy
+# lives where the service runs, and not one step further.
 #
 # Model: the runner SSHes out to the target host's existing sshd as the
 # service's own user (e.g. `agent@`). The matching public key is pinned in
@@ -42,9 +42,16 @@ on:
         description: known_hosts line(s) for the target host key
         required: true
 
+# The deploy must never read or write repository content; the token here
+# only answers the GitHub attestation store for provenance verification.
+permissions:
+  contents: read
+  attestations: read
+
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - name: Resolve image digest
         # Deploy by digest, never by floating tag: a tag is mutable, so a
@@ -64,14 +71,37 @@ jobs:
           echo "Pinning $image_ref -> $digest"
           echo "digest=$image_ref@$digest" >> "$GITHUB_OUTPUT"
 
+      - name: Verify build provenance
+        # Closing the loop the attestations were opened by
+        # container-build.yml: the build job pushes a Sigstore-signed
+        # provenance attestation (actions/attest-build-provenance) to this
+        # repository's attestation store, and this step proves — before
+        # anything touches a host — that the pinned digest was built by THIS
+        # repository's CI from THIS workflow. A substituted or unattested
+        # digest fails closed; the deploy never reaches the SSH step.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_REF: ${{ steps.resolve.outputs.digest }}
+        run: |
+          set -euo pipefail
+          gh attestation verify "$IMAGE_REF" \
+            --repo "$GITHUB_REPOSITORY" \
+            --format json >/dev/null
+          echo "provenance OK: $IMAGE_REF attested by this repository's CI"
+
       - name: Install SSH key material
         # StrictHostKeyChecking=yes: the known_hosts pin is captured from
         # the target at provisioning time; the deploy must fail rather than
-        # silently trust an unexpected host key.
+        # silently trust an unexpected host key. Secrets arrive via env,
+        # never via run-body interpolation: the script text is static, so
+        # key material can never alter the executed command line.
+        env:
+          DEPLOY_KEY: ${{ secrets.deploy_key }}
+          HOST_KEY: ${{ secrets.host_key }}
         run: |
           install -d -m 700 ~/.ssh
-          install -m 600 /dev/stdin ~/.ssh/deploy_key <<< "${{ secrets.deploy_key }}"
-          printf '%s\n' "${{ secrets.host_key }}" > ~/.ssh/known_hosts
+          install -m 600 /dev/stdin ~/.ssh/deploy_key <<< "$DEPLOY_KEY"
+          printf '%s\n' "$HOST_KEY" > ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
       - name: Roll service to pinned digest
