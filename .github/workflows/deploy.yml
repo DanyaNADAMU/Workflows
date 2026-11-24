@@ -4,8 +4,8 @@ name: Deploy Service
 #   uses: Danyanadamu/Workflows/.github/workflows/deploy.yml@v1
 # This repository is public and therefore holds ZERO secrets by design: the
 # deploy key and known_hosts pin live in the calling repository's own secrets
-# (`secrets: inherit`), never here. The right to deploy lives where the
-# service runs, and not one step further.
+# (passed by name through `workflow_call`), never here. The right to deploy
+# lives where the service runs, and not one step further.
 #
 # Model: the runner SSHes out to the target host's existing sshd as the
 # service's own user (e.g. `agent@`). The matching public key is pinned in
@@ -34,6 +34,12 @@ on:
         description: Registry image reference (tag form; digest resolved here)
         type: string
         required: true
+      verify_provenance:
+        description: Verify the Sigstore provenance attestation before the SSH step
+          (false for repos that cannot host attestations, e.g. user-owned private repositories)
+        type: boolean
+        required: false
+        default: true
     secrets:
       deploy_key:
         description: Dedicated deploy private key (the service user's key)
@@ -42,9 +48,16 @@ on:
         description: known_hosts line(s) for the target host key
         required: true
 
+# The deploy must never read or write repository content beyond the
+# checkout-less token minimum; the GitHub attestation store lookup in
+# the provenance step rides the caller-granted token permissions.
+permissions:
+  contents: read
+
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
       - name: Resolve image digest
         # Deploy by digest, never by floating tag: a tag is mutable, so a
@@ -63,15 +76,48 @@ jobs:
             --format '{{.Manifest.Digest}}')"
           echo "Pinning $image_ref -> $digest"
           echo "digest=$image_ref@$digest" >> "$GITHUB_OUTPUT"
+          # gh attestation verify only accepts a digest-only OCI reference
+          # (name@sha256:...): a name:tag@sha256:... form is misparsed as a
+          # local file path, so strip the tag for the verification input.
+          echo "verify_ref=${image_ref%%:*}@$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Verify build provenance
+        # Closing the loop the attest job opened: the caller signs the
+        # pushed digest (actions/attest-build-provenance) into this
+        # repository's attestation store, and this step proves — before
+        # anything touches a host — that the pinned digest was built by
+        # THIS repository's CI. A substituted or unattested digest fails
+        # closed; the deploy never reaches the SSH step.
+        # verify_provenance=false is the documented escape hatch for
+        # repositories that cannot host attestations at all (user-owned
+        # private repos): their deploy integrity stays with the digest
+        # pin and the forced-command wrapper.
+        if: inputs.verify_provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE_REF: ${{ steps.resolve.outputs.verify_ref }}
+        run: |
+          set -euo pipefail
+          # The oci:// prefix is what makes the CLI treat the argument as
+          # an OCI reference; a bare name@sha256:... is parsed as a file path.
+          gh attestation verify "oci://$IMAGE_REF" \
+            --repo "$GITHUB_REPOSITORY" \
+            --format json >/dev/null
+          echo "provenance OK: $IMAGE_REF attested by this repository's CI"
 
       - name: Install SSH key material
         # StrictHostKeyChecking=yes: the known_hosts pin is captured from
         # the target at provisioning time; the deploy must fail rather than
-        # silently trust an unexpected host key.
+        # silently trust an unexpected host key. Secrets arrive via env,
+        # never via run-body interpolation: the script text is static, so
+        # key material can never alter the executed command line.
+        env:
+          DEPLOY_KEY: ${{ secrets.deploy_key }}
+          HOST_KEY: ${{ secrets.host_key }}
         run: |
           install -d -m 700 ~/.ssh
-          install -m 600 /dev/stdin ~/.ssh/deploy_key <<< "${{ secrets.deploy_key }}"
-          printf '%s\n' "${{ secrets.host_key }}" > ~/.ssh/known_hosts
+          install -m 600 /dev/stdin ~/.ssh/deploy_key <<< "$DEPLOY_KEY"
+          printf '%s\n' "$HOST_KEY" > ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
       - name: Roll service to pinned digest

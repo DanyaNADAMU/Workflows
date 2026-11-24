@@ -36,23 +36,29 @@ on:
 
 jobs:
   mirror:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
     steps:
       - name: Checkout full history
         # fetch-depth 0 so refs/* travel complete: a mirror push that
         # dropped branches or tags would silently corrupt the copy.
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
       - name: Install SSH key material
         # StrictHostKeyChecking=yes: the known_hosts pin is a TOFU line
         # captured from the server at provisioning time; the deploy must
-        # fail rather than silently trust an unexpected host key.
+        # fail rather than silently trust an unexpected host key. Secrets
+        # arrive via env, never via run-body interpolation: the script
+        # text stays static, so key material can never alter the command.
+        env:
+          MIRROR_KEY: ${{ secrets.mirror_key }}
+          HOST_KEY: ${{ secrets.host_key }}
         run: |
           install -d -m 700 ~/.ssh
-          install -m 600 /dev/stdin ~/.ssh/mirror_key <<< "${{ secrets.mirror_key }}"
-          printf '%s\n' "${{ secrets.host_key }}" > ~/.ssh/known_hosts
+          install -m 600 /dev/stdin ~/.ssh/mirror_key <<< "$MIRROR_KEY"
+          printf '%s\n' "$HOST_KEY" > ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
       - name: Push mirror

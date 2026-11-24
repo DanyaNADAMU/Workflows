@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `sast.yml`: reusable CodeQL static analysis — first-party SAST, free on
+  the organization's public-by-design repositories, with taint-flow
+  analysis beyond AST-lint reach. Callers pass a JSON language array.
+- `scan-cron.yml`: reusable post-deploy CVE drift detector — re-scans the
+  currently deployed image digests on the caller's cron schedule; a red
+  run is a patch-release signal, never a blocker for the running deploy
+  (container-build scans once at build time; CVEs published later were
+  previously invisible until the next tag).
+- `protection-audit.yml`: reusable configuration-drift auditor — diffs the
+  actual main-branch protection and release-tag ruleset against the
+  caller-committed `.github/protection-expected.json` and goes red on
+  drift; reads via a dedicated read-only fine-grained PAT passed as an
+  optional secret (warns, not fails, until provisioned).
+- `container-build.yml`: `image_digest` output — the Sigstore provenance
+  attestation moved to the CALLER side (`actions/attest-build-provenance`
+  job after `build`): `id-token` cannot be granted inside a reusable
+  workflow, so the signing right and the signing step both live where the
+  build is ordered. buildx's in-index provenance stays what it always was
+  — unsigned and unverifiable; the GitHub attestation store entry is the
+  evidence `deploy.yml` verifies before any host is touched. Callers add
+  an `attest` job with `id-token: write` + `attestations: write` and
+  `attestations: read` on deploy-calling jobs.
+- `container-build.yml`: full-severity Trivy report as a 30-day artifact
+  next to every pushed build — the CRITICAL-only gate stays narrow by
+  design, but HIGH/MEDIUM findings now stay reachable without re-running
+  anything.
+- `timeout-minutes` on every catalog job (build 30, deploy 10, ots 30,
+  precheck 10, mirror 5) — a hung oracle or a stuck push must cost a
+  bounded amount of runner minutes.
+
+### Changed
+- `deploy.yml`: build-provenance verification (`gh attestation verify`)
+  between digest resolution and the SSH step — a substituted or
+  unattested digest fails closed before anything reaches a host.
+- `deploy.yml`, `mirror.yml`: SSH key material now arrives via `env:`
+  instead of `${{ secrets.* }}` interpolation inside `run` bodies — the
+  script text is static, so secret contents can never alter the executed
+  command line (script-injection hardening).
+
+### Fixed
+- Catalog callers: `deploy.yml` previously ran on `ubuntu-latest`; the
+  whole catalog now pins `ubuntu-24.04` except `ots.yml` (whose pipx
+  install path was validated on `ubuntu-latest`).
+
 ## [v1.1.3] - 2026-11-24
 
 ### Fixed

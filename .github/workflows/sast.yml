@@ -1,0 +1,54 @@
+name: SAST (CodeQL)
+
+# Reusable CodeQL static analysis, invoked as
+#   uses: Danyanadamu/Workflows/.github/workflows/sast.yml@v1
+# with a JSON array of CodeQL languages (e.g. '["python"]'). Chosen over
+# bandit/semgrep because every repository in the organization is public
+# by design, where CodeQL is free; it is first-party (no third-party
+# trust root to pin and audit), needs no curated rule set, and its
+# taint-flow analysis catches injection classes AST linters cannot see.
+# Repositories without a CodeQL-supported language (e.g. Agent: shell +
+# Dockerfile) simply do not wire this workflow; shellcheck and hadolint
+# are the SAST-equivalent gate there.
+#
+# Public repository holding ZERO secrets by design; results upload to the
+# caller's own Code Scanning view via the job's token.
+on:
+  workflow_call:
+    inputs:
+      languages:
+        description: JSON array of CodeQL languages, e.g. '["python"]'
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ${{ fromJSON(inputs.languages) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@915412ff23e8b7659517e607487dbeae018f2934 # v4
+        with:
+          languages: ${{ matrix.language }}
+
+      - name: Autobuild
+        # The autobuilder covers the standard layout of every language the
+        # organization ships; a bespoke build step would add per-repo
+        # surface for zero present benefit.
+        uses: github/codeql-action/autobuild@915412ff23e8b7659517e607487dbeae018f2934 # v4
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@915412ff23e8b7659517e607487dbeae018f2934 # v4
+        with:
+          category: /language:${{ matrix.language }}

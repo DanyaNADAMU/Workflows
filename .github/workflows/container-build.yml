@@ -3,9 +3,11 @@ name: Container Build
 # Reusable GHCR image build, invoked as
 #   uses: Danyanadamu/Workflows/.github/workflows/container-build.yml@v1
 # One canonical build path for every repository: lowercase name
-# normalization, GHA layer cache, provenance + SBOM attestations, and a
-# severity-gated Trivy scan on pushed refs. Public repository holding
-# ZERO secrets by design: only the implicit GITHUB_TOKEN is used.
+# normalization, GHA layer cache, provenance + SBOM attestations, Trivy
+# severity gate on pushed refs, and a Sigstore-signed build-provenance
+# attestation the deploy job verifies before anything touches a host.
+# Public repository holding ZERO secrets by design: only the implicit
+# GITHUB_TOKEN is used.
 on:
   workflow_call:
     inputs:
@@ -45,9 +47,18 @@ on:
       image_ref:
         description: Pushed image reference (ghcr.io/name:primary-tag)
         value: ${{ jobs.build.outputs.image_ref }}
+      image_digest:
+        description: Pushed image digest (sha256:...) — the attestable subject
+        value: ${{ jobs.build.outputs.image_digest }}
 
 # The calling job's permissions are authoritative; declared here so the
 # contract is visible in the catalog and can only be downgraded upstream.
+# NOTE: the Sigstore provenance attestation deliberately does NOT run
+# here — `id-token` cannot be granted to a reusable workflow's job
+# (GitHub hard limitation: the OIDC grant never propagates past the
+# `uses:` boundary). Callers run their own `attest` job after `build`
+# with id-token: write + attestations: write, signing the digest this
+# workflow returns via the `image_digest` output.
 permissions:
   contents: read
   packages: write
@@ -55,8 +66,10 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     outputs:
       image_ref: ${{ steps.record.outputs.image_ref }}
+      image_digest: ${{ steps.pushbuild.outputs.digest }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -96,6 +109,7 @@ jobs:
           password: ${{ github.token }}
 
       - name: Build and push image
+        id: pushbuild
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: ${{ inputs.context }}
@@ -136,6 +150,33 @@ jobs:
           # The prune above is what buys the disk headroom the Java DB needs;
           # --ignore-unfixed keeps the gate signal clean regardless.
           ./trivy image --exit-code 1 --ignore-unfixed --severity "$SEVERITY" "$IMAGE_REF"
+
+      - name: Full vulnerability report (artifact)
+        # The CRITICAL-only gate deliberately stays narrow (unfixable HIGH
+        # findings must not freeze releases), but the full picture still
+        # has to be reachable without re-running anything: this report
+        # carries every severity including unfixed findings, parked as a
+        # short-retention artifact next to the build for audit use.
+        if: inputs.push
+        env:
+          TRIVY_VERSION: '0.76.2'
+        run: |
+          set -euo pipefail
+          ./trivy image \
+            --format json \
+            --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+            --output trivy-report.json \
+            "$IMAGE_REF"
+          findings=$(jq '[.Results[]?.Vulnerabilities[]?] | length' trivy-report.json)
+          echo "trivy full report: $findings finding(s) across all severities"
+
+      - name: Upload full vulnerability report
+        if: inputs.push
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: trivy-report-${{ inputs.image_tag }}
+          path: trivy-report.json
+          retention-days: 30
 
       - name: Record pushed image ref
         id: record
