@@ -1,4 +1,9 @@
 #!/bin/sh
-# OpenTimestamps: upgrade previous proofs and submit new commit hash if due
-git ots upgrade >/dev/null 2>&1
-git ots run >/dev/null 2>&1 &
+# OpenTimestamps: upgrade previous proofs and submit new commit hash if due.
+#
+# Both calls are synchronous on purpose. A backgrounded ots run outlives
+# the hook as an orphan, and where PID 1 does not reap (application PID 1
+# instead of an init) each orphan becomes a permanent zombie that eats a
+# pids cgroup slot.
+git ots upgrade >/dev/null 2>&1 || true
+timeout 120 git ots run >/dev/null 2>&1 || true

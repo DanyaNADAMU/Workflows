@@ -1,3 +1,21 @@
 #!/bin/sh
-# OpenTimestamps: silently push OTS blockchain tags alongside code
-git push origin 'refs/tags/ots/*:refs/tags/ots/*' >/dev/null 2>&1 &
+# OpenTimestamps: push OTS blockchain tags alongside code.
+#
+# This hook must never recurse: pushing refs/tags/ots/* is itself a git
+# push, so it re-enters this hook. The stdin guard exits when the remote
+# refs are exclusively ots tags (or there are none).
+#
+# The push runs synchronously under a timeout. A backgrounded push is
+# orphaned the moment the hook exits; on a host whose PID 1 does not reap
+# (an application server started as PID 1, not an init), every orphan ends
+# up an unreaped zombie, and enough of them exhaust the pids cgroup.
+ots_only=1
+while read -r local_ref local_sha remote_ref remote_sha; do
+    case "$remote_ref" in
+        refs/tags/ots/*) ;;
+        *) ots_only=0 ;;
+    esac
+done
+[ "$ots_only" = "1" ] && exit 0
+
+timeout 60 git push origin 'refs/tags/ots/*:refs/tags/ots/*' >/dev/null 2>&1 || true
