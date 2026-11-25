@@ -37,6 +37,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
+      - name: Checkout repository
+        # The caller's Trivy policy lives in its own tree (trivy.yaml
+        # pointing at .trivyignore.yaml with dated suppressions for
+        # prebuilt binaries). Without the checkout this scan would flag
+        # findings the build gate deliberately suppresses, turning the
+        # drift signal into noise. Same tree, same policy.
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
       - name: Vulnerability re-scan (Trivy)
         env:
           TRIVY_VERSION: '0.76.2'

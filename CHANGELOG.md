@@ -64,6 +64,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   submission red-locked the loop forever: the pending proof could never
   reach `main`, so nothing could ever upgrade it.
 
+## [Unreleased]
+
+### Fixed
+- `scan-cron.yml`: the re-scan now checks out the caller's tree, so the
+  repository's own Trivy policy (`trivy.yaml` → `.trivyignore.yaml` with
+  dated suppressions for prebuilt binaries) applies. Without it the scan
+  flagged findings the build gate deliberately suppresses, turning the
+  drift signal into permanent noise (Agent's `:latest` red-flagged a
+  suppression that self-expires in 2027).
+
 ## [v1.1.3] - 2026-11-24
 
 ### Fixed
